@@ -116,13 +116,18 @@ namespace mapnik { namespace vector {
                         }
                         else if (cmd == (mapnik::SEG_CLOSE & ((1 << cmd_bits) - 1)))
                         {
-                            geom->push_vertex(0, 0, mapnik::SEG_CLOSE);
+                            if (geom->size() > 4 ) geom->push_vertex(0, 0, mapnik::SEG_CLOSE);
+                            else geom.reset(new mapnik::geometry_type(mapnik::eGeomType(f.type())));
                         }
                         else
                         {
                             throw std::runtime_error("Unknown command type");
                         }
                     }
+                }
+                if (f.type() == 3 && geom->size() < 4)
+                {
+                    continue;
                 }
                 if (!filter_.pass(envelope))
                 {
