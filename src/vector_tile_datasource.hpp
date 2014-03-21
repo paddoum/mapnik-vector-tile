@@ -201,6 +201,9 @@ namespace mapnik { namespace vector {
                             {
                                 envelope.expand_to_include(x,y);
                             }
+                            if (k < 432 || k > 440) {
+                                continue;
+                            }
                             geom->push_vertex(x, y, static_cast<mapnik::CommandType>(cmd));
                         }
                         else if (cmd == (mapnik::SEG_CLOSE & ((1 << cmd_bits) - 1)))
@@ -228,6 +231,9 @@ namespace mapnik { namespace vector {
                 if (f.has_id())
                 {
                     feature_id = f.id();
+                }
+                if (feature_id != 86) {
+                    continue;
                 }
                 mapnik::feature_ptr feature(
                     mapnik::feature_factory::create(ctx_,feature_id));
