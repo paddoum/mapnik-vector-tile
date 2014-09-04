@@ -203,17 +203,44 @@ namespace mapnik { namespace vector {
                 {
                     continue;
                 }
-                MAPNIK_UNIQUE_PTR<mapnik::geometry_type> geom(
-                    new mapnik::geometry_type(
-                        MAPNIK_GEOM_TYPE(f.type())));
                 int cmd = -1;
                 const int cmd_bits = 3;
                 unsigned length = 0;
+                std::size_t num_verticies = 0;
+                // first pass over geometries to see exactly how many we have
+                for (int k = 0; k < f.geometry_size();)
+                {
+                    if (!length) {
+                        unsigned cmd_length = f.geometry(k++);
+                        cmd = cmd_length & ((1 << cmd_bits) - 1);
+                        length = cmd_length >> cmd_bits;
+                    }
+                    if (length > 0) {
+                        length--;
+                        if (cmd == mapnik::SEG_MOVETO || cmd == mapnik::SEG_LINETO)
+                        {
+                            k+=2;
+                            ++num_verticies;
+                        }
+                        else if (cmd == (mapnik::SEG_CLOSE & ((1 << cmd_bits) - 1)))
+                        {
+                            num_verticies+=2;
+                        }
+                    }
+                }
+                // reset iterators
+                cmd = -1;
+                length = 0;
+                // new variables to collect scaled geometries
+                MAPNIK_UNIQUE_PTR<mapnik::geometry_type> geom(
+                    new mapnik::geometry_type(
+                        MAPNIK_GEOM_TYPE(f.type())));
+                geom->reserve(num_verticies);
                 double x = tile_x_, y = tile_y_;
-                bool first = true;
-                mapnik::box2d<double> envelope;
                 double first_x=0;
                 double first_y=0;
+                bool first = true;
+                mapnik::box2d<double> envelope;
                 for (int k = 0; k < f.geometry_size();)
                 {
                     if (!length) {
@@ -269,8 +296,11 @@ namespace mapnik { namespace vector {
                 {
                     feature_id = f.id();
                 }
+                if (num_verticies != geom->size()) std::clog << num_verticies << " / " << geom->size() << "\n";
                 mapnik::feature_ptr feature = mapnik::feature_factory::create(ctx_,feature_id);
-                feature->paths().push_back(geom.release());
+                mapnik::geometry_container & paths = feature->paths();
+                paths.reserve(1);
+                paths.push_back(geom.release());
                 add_attributes(feature,f,layer_,tr_);
                 return feature;
             }
