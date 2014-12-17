@@ -208,14 +208,87 @@ namespace mapnik { namespace vector_tile_impl {
                 int cmd = -1;
                 const int cmd_bits = 3;
                 unsigned length = 0;
-                double x = tile_x_, y = tile_y_;
                 bool first = true;
+                double x = tile_x_, y = tile_y_;
                 mapnik::box2d<double> envelope;
+                
+                #ifdef GEOM_RESERVE
+                std::map<unsigned,unsigned> geom_lookahead;
+                #endif
+                unsigned num_geoms = 0;
+                unsigned num_verts = 0;
+                // first pass over geometries to calculate bbox
+                // and total number of verticies
+                for (int k = 0; k < f.geometry_size();)
+                {
+                    if (!length) {
+                        unsigned cmd_length = f.geometry(k++);
+                        cmd = cmd_length & ((1 << cmd_bits) - 1);
+                        length = cmd_length >> cmd_bits;
+                    }
+                    if (length > 0) {
+                        length--;
+                        if (cmd == mapnik::SEG_MOVETO || cmd == mapnik::SEG_LINETO)
+                        {
+                            int32_t dx = f.geometry(k++);
+                            int32_t dy = f.geometry(k++);
+                            dx = ((dx >> 1) ^ (-(dx & 1)));
+                            dy = ((dy >> 1) ^ (-(dy & 1)));
+                            x += (static_cast<double>(dx) / scale_);
+                            y -= (static_cast<double>(dy) / scale_);
+                            if (first)
+                            {
+                                envelope.init(x,y,x,y);
+                                #ifdef GEOM_RESERVE
+                                num_verts++;
+                                #endif
+                                first = false;
+                            }
+                            else
+                            {
+                                envelope.expand_to_include(x,y);
+                                if (cmd == mapnik::SEG_MOVETO && multi_geom_)
+                                {
+                                    #ifdef GEOM_RESERVE
+                                    geom_lookahead[num_geoms] = num_verts;
+                                    #endif
+                                    num_verts = 0;
+                                    ++num_geoms;
+                                }
+                                num_verts++;
+                            }
+                        }
+                        #ifdef GEOM_RESERVE
+                        else if (cmd == (mapnik::SEG_CLOSE & ((1 << cmd_bits) - 1)))
+                        {
+                            num_verts+=2;
+                        }
+                        #endif
+                    }
+                }
+                if (!filter_.pass(envelope))
+                {
+                    continue;
+                }
+                #ifdef GEOM_RESERVE
+                // update last geom
+                geom_lookahead[num_geoms] = num_verts;
+                #endif
+                // reset iterators
+                cmd = -1;
+                length = 0;
+                x = tile_x_, y = tile_y_;
+                num_geoms = 0;
+                first = true;
                 double first_x=0;
                 double first_y=0;
                 mapnik::feature_ptr feature = mapnik::feature_factory::create(ctx_,feature_id);
+                feature->paths().reserve(num_geoms);
                 feature->paths().push_back(new mapnik::geometry_type(MAPNIK_GEOM_TYPE(f.type())));
                 mapnik::geometry_type * geom = &feature->paths().front();
+                #ifdef GEOM_RESERVE
+                geom->reserve(geom_lookahead[num_geoms]);
+                #endif
                 for (int k = 0; k < f.geometry_size();)
                 {
                     if (!length) {
@@ -236,21 +309,18 @@ namespace mapnik { namespace vector_tile_impl {
                             if (cmd == mapnik::SEG_MOVETO)
                             {
                                 if (multi_geom_ && !first) {
+                                    //if (geom_lookahead[num_geoms] != geom->size()) std::clog << "a " << num_geoms << " " << geom_lookahead[num_geoms] << " / " << geom->size() << "\n";
                                     feature->paths().push_back(new mapnik::geometry_type(MAPNIK_GEOM_TYPE(f.type())));
                                     geom = &feature->paths().back();
+                                    ++num_geoms;
+                                    #ifdef GEOM_RESERVE
+                                    geom->reserve(geom_lookahead[num_geoms]);
+                                    #endif
                                 }
                                 first_x = x;
                                 first_y = y;
                             }
-                            if (first)
-                            {
-                                envelope.init(x,y,x,y);
-                                first = false;
-                            }
-                            else
-                            {
-                                envelope.expand_to_include(x,y);
-                            }
+                            if (first) first = false;
                             geom->push_vertex(x, y, static_cast<mapnik::CommandType>(cmd));
                         }
                         else if (cmd == (mapnik::SEG_CLOSE & ((1 << cmd_bits) - 1)))
@@ -267,10 +337,7 @@ namespace mapnik { namespace vector_tile_impl {
                         }
                     }
                 }
-                if (!filter_.pass(envelope))
-                {
-                    continue;
-                }
+                //if (geom_lookahead[num_geoms] != geom->size()) std::clog << "b " << num_geoms << " " << geom_lookahead[num_geoms] << " / " << geom->size() << "\n";
                 add_attributes(feature,f,layer_,tr_);
                 return feature;
             }

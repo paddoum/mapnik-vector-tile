@@ -380,9 +380,70 @@ TEST_CASE( "encoding multi line as one path", "should maintain second move_to co
     f_ptr = fs->next();
     CHECK(f_ptr != mapnik::feature_ptr());
     CHECK(f_ptr->paths().size() == 2);
-
 }
 
+// NOTE: encoding multiple lines as one path is technically incorrect
+// because in Mapnik the protocol is to split geometry parts into separate paths.
+// However this case should still be supported because keeping a single flat array is an
+// important optimization in the case that lines do not need to be labeled in custom ways
+// or represented as GeoJSON
+TEST_CASE( "encoding multi polygon as one path", "should maintain second move_to command" ) {
+    // Options
+    // here we use a multiplier of 1 to avoid rounding numbers
+    // and stay in integer space for simplity
+    unsigned path_multiplier = 1;
+    // here we use an extreme tolerance to prove tht all vertices are maintained no matter
+    // the tolerance because we never want to drop a move_to or the first line_to
+    unsigned tolerance = 2000000;
+    // now create the testing data
+    vector_tile::Tile tile;
+    mapnik::vector_tile_impl::backend_pbf backend(tile,path_multiplier);
+    backend.start_tile_layer("layer");
+    mapnik::feature_ptr feature(mapnik::feature_factory::create(MAPNIK_MAKE_SHARED<mapnik::context_type>(),1));
+    backend.start_tile_feature(*feature);
+    MAPNIK_UNIQUE_PTR<mapnik::geometry_type> g(new mapnik::geometry_type(MAPNIK_POLYGON));
+    g->move_to(0,0);        // takes 3 geoms: command length,x,y
+    g->line_to(2,2);        // new command, so again takes 3 geoms: command length,x,y | total 6
+    g->line_to(4,4);
+    g->close_path();
+    g->move_to(1,1);        // takes 3 geoms: command length,x,y
+    g->line_to(2,2);        // new command, so again takes 3 geoms: command length,x,y | total 6
+    g->line_to(4,4);
+    g->close_path();
+    backend.add_path(*g, tolerance, g->type());
+    backend.stop_tile_feature();
+    backend.stop_tile_layer();
+    // done encoding single feature/geometry
+    std::string key("");
+    CHECK(false == mapnik::vector_tile_impl::is_solid_extent(tile,key));
+    CHECK("" == key);
+    CHECK(1 == tile.layers_size());
+    vector_tile::Tile_Layer const& layer = tile.layers(0);
+    CHECK(1 == layer.features_size());
+    vector_tile::Tile_Feature const& f = layer.features(0);
+    CHECK(14 == f.geometry_size());
+
+    mapnik::featureset_ptr fs;
+    mapnik::feature_ptr f_ptr;
+
+    mapnik::vector_tile_impl::tile_datasource ds(layer,_x,_y,_z,tile_size);
+    fs = ds.features(mapnik::query(bbox));
+    f_ptr = fs->next();
+    CHECK(f_ptr != mapnik::feature_ptr());
+    // no attributes
+    CHECK(f_ptr->context()->size() == 0);
+
+    // by default the single geometry array should decode into a single mapnik path
+    CHECK(f_ptr->paths().size() == 1);
+
+    // but we can pass multi_geom=true to request true multipart features which may
+    // be needed for labeling or correctly representing geom as GeoJSON
+    mapnik::vector_tile_impl::tile_datasource ds2(layer,_x,_y,_z,tile_size,true);
+    fs = ds2.features(mapnik::query(bbox));
+    f_ptr = fs->next();
+    CHECK(f_ptr != mapnik::feature_ptr());
+    CHECK(f_ptr->paths().size() == 2);
+}
 TEST_CASE( "encoding single line 1", "should maintain start/end vertex" ) {
     // Options
     // here we use a multiplier of 1 to avoid rounding numbers
