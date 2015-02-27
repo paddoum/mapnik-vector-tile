@@ -127,6 +127,11 @@
       ],
       "include_dirs": [
         "../src"
+      ],
+      'libraries':[
+        '-L<!@(mapnik-config --prefix)/lib',
+        '<!@(mapnik-config --ldflags)',
+        '-lz'
       ]
     },
     {
