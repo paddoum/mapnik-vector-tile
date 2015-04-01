@@ -25,12 +25,17 @@
 #include <mapnik/transform_path_adapter.hpp>
 #include <mapnik/geometry_is_empty.hpp>
 #include <mapnik/geometry_envelope.hpp>
+#include <mapnik/geometry_adapters.hpp>
+#include <mapnik/geometry_correct.hpp>
+#include <mapnik/geometry_is_simple.hpp>
 
 // agg
 #include "agg_path_storage.h"
 
 // agg core clipper: http://www.angusj.com/delphi/clipper.php
-#include "agg_conv_clipper.h"
+//#include "agg_conv_clipper.h"
+#include "clipper.hpp"
+
 
 // angus clipper
 #include "agg_conv_clip_polygon.h"
@@ -835,11 +840,6 @@ unsigned processor<T>::handle_geometry(mapnik::feature_impl const& feature,
                                        mapnik::proj_transform const& prj_trans,
                                        mapnik::box2d<double> const& buffered_query_ext)
 {
-    if (mapnik::geometry::is_empty(geom))
-    {
-        return 0;
-    }
-
     unsigned path_count = 0;
     if (geom.is<mapnik::geometry::point>())
     {
@@ -940,12 +940,14 @@ unsigned processor<T>::handle_geometry(mapnik::feature_impl const& feature,
         mapnik::box2d<double> bbox = mapnik::geometry::envelope(geom);
         if (buffered_query_ext.intersects(bbox))
         {
+            std::clog << "poly\n";
             auto const& poly = mapnik::util::get<mapnik::geometry::polygon>(geom);
             if (poly.exterior_ring.size() > 3)
             {
                 backend_.start_tile_feature(feature);
                 backend_.current_feature_->set_type(vector_tile::Tile_GeomType_POLYGON);
                 using va_type = mapnik::geometry::polygon_vertex_adapter;
+                /*
                 using clip_type = agg::conv_clip_polygon<va_type>;
                 using path_type = mapnik::transform_path_adapter<mapnik::view_transform,clip_type>;
                 va_type va(poly);
@@ -957,6 +959,46 @@ unsigned processor<T>::handle_geometry(mapnik::feature_impl const& feature,
                     buffered_query_ext.maxy());
                 path_type path(t_, clipped, prj_trans);
                 path_count = backend_.add_path(path, tolerance_);
+                */
+
+                /*
+
+                using path_type = mapnik::transform_path_adapter<mapnik::view_transform,va_type>;
+                std::deque<mapnik::geometry::polygon> result;
+                mapnik::geometry::bounding_box bbox(buffered_query_ext.minx(),buffered_query_ext.miny(),buffered_query_ext.maxx(),buffered_query_ext.maxy());
+                boost::geometry::intersection(bbox,poly,result);
+                for (auto & clipped : result)
+                {
+                  mapnik::geometry::correct(clipped);
+                  va_type va(clipped);
+                  path_type path(t_, va, prj_trans);
+                  path_count = backend_.add_path(path, tolerance_);
+                }
+
+                */
+
+                /*
+                agg::path_storage ps;
+                ps.move_to(buffered_query_ext.minx(), buffered_query_ext.miny());
+                ps.line_to(buffered_query_ext.minx(), buffered_query_ext.maxy());
+                ps.line_to(buffered_query_ext.maxx(), buffered_query_ext.maxy());
+                ps.line_to(buffered_query_ext.maxx(), buffered_query_ext.miny());
+                ps.close_polygon();
+                using poly_clipper = agg::conv_clipper<va_type, agg::path_storage>;
+                using path_type = mapnik::transform_path_adapter<mapnik::view_transform, poly_clipper>;
+                va_type va(poly);
+                poly_clipper clipped(va,ps,
+                                     agg::clipper_and,
+                                     agg::clipper_non_zero,
+                                     agg::clipper_non_zero,
+                                     1);
+                path_type path(t_, clipped, prj_trans);
+                path_count = backend_.add_path(path, tolerance_);
+                */
+
+                // clipper direct
+
+
                 backend_.stop_tile_feature();
             }
         }
@@ -966,18 +1008,20 @@ unsigned processor<T>::handle_geometry(mapnik::feature_impl const& feature,
         mapnik::box2d<double> bbox = mapnik::geometry::envelope(geom);
         if (buffered_query_ext.intersects(bbox))
         {
+            std::clog << "multi\n";
             backend_.start_tile_feature(feature);
             backend_.current_feature_->set_type(vector_tile::Tile_GeomType_POLYGON);
             using va_type = mapnik::geometry::polygon_vertex_adapter;
-            using clip_type = agg::conv_clip_polygon<va_type>;
-            using path_type = mapnik::transform_path_adapter<mapnik::view_transform,clip_type>;
+            //using clip_type = agg::conv_clip_polygon<va_type>;
+            //using path_type = mapnik::transform_path_adapter<mapnik::view_transform,clip_type>;
             auto const& polys = mapnik::util::get<mapnik::geometry::multi_polygon>(geom);
+            ClipperLib::Clipper clipper;
             for (auto const& poly : polys)
             {
                 mapnik::box2d<double> bbox = mapnik::geometry::envelope(poly);
                 if (poly.exterior_ring.size() > 3 && buffered_query_ext.intersects(bbox))
                 {
-                    va_type va(poly);
+                    /*va_type va(poly);
                     clip_type clipped(va);
                     clipped.clip_box(
                         buffered_query_ext.minx(),
@@ -986,8 +1030,112 @@ unsigned processor<T>::handle_geometry(mapnik::feature_impl const& feature,
                         buffered_query_ext.maxy());
                     path_type path(t_, clipped, prj_trans);
                     path_count += backend_.add_path(path, tolerance_);
+                    */
+
+                    /*
+                    using path_type = mapnik::transform_path_adapter<mapnik::view_transform,va_type>;
+                    std::deque<mapnik::geometry::polygon> result;
+                    mapnik::geometry::bounding_box bbox(buffered_query_ext.minx(),buffered_query_ext.miny(),buffered_query_ext.maxx(),buffered_query_ext.maxy());
+                    boost::geometry::intersection(bbox,poly,result);
+                    for (auto & clipped : result)
+                    {
+                      mapnik::geometry::correct(clipped);
+                      if (mapnik::geometry::is_simple(clipped))
+                      {
+                          va_type va(clipped);
+                          path_type path(t_, va, prj_trans);
+                          path_count = backend_.add_path(path, tolerance_);                        
+                      }
+                    }
+                    */
+
+                    /*
+                    agg::path_storage ps;
+                    ps.move_to(buffered_query_ext.minx(), buffered_query_ext.miny());
+                    ps.line_to(buffered_query_ext.minx(), buffered_query_ext.maxy());
+                    ps.line_to(buffered_query_ext.maxx(), buffered_query_ext.maxy());
+                    ps.line_to(buffered_query_ext.maxx(), buffered_query_ext.miny());
+                    ps.close_polygon();
+                    using poly_clipper = agg::conv_clipper<va_type, agg::path_storage>;
+                    using path_type = mapnik::transform_path_adapter<mapnik::view_transform, poly_clipper>;
+                    va_type va(poly);
+                    poly_clipper clipped(va,ps,
+                                         agg::clipper_and,
+                                         agg::clipper_non_zero,
+                                         agg::clipper_non_zero,
+                                         1);
+                    path_type path(t_, clipped, prj_trans);
+                    path_count = backend_.add_path(path, tolerance_);
+                    */
+                    // TODO - simplify/clean
+                    // convert into screen coordinates and push into clipper path
+                    
+                    // enum PolyFillType { pftEvenOdd, pftNonZero, pftPositive, pftNegative };
+
+                    std::vector<ClipperLib::IntPoint> path;
+                    for (auto const& pt : poly.exterior_ring)
+                    {
+                        double x = pt.x;
+                        double y = pt.y;                        
+                        double z = 0;
+                        bool ok = false;
+                        bool skipped_points = false;
+                        while (!ok)
+                        {
+                            ok = prj_trans.backward(x, y, z);
+                            if (!ok) {
+                                skipped_points = true;
+                            }
+                        }
+                        t_.forward(&x,&y);
+                        path.emplace_back(static_cast<ClipperLib::cInt>(x),static_cast<ClipperLib::cInt>(y));
+                    }
+                    if (!clipper.AddPath(path, ClipperLib::ptSubject, true))
+                    {
+                        std::clog << "ptSubject ext failed!\n";
+                    }
+                    for (auto const& ring : poly.interior_rings)
+                    {
+                        path.clear();
+                        for (auto const& pt : ring)
+                        {
+                            double x = pt.x;
+                            double y = pt.y;                        
+                            double z = 0;
+                            bool ok = false;
+                            bool skipped_points = false;
+                            while (!ok)
+                            {
+                                ok = prj_trans.backward(x, y, z);
+                                if (!ok) {
+                                    skipped_points = true;
+                                }
+                            }
+                            t_.forward(&x,&y);
+                            path.emplace_back(static_cast<ClipperLib::cInt>(x),static_cast<ClipperLib::cInt>(y));
+                        }
+                        if (!clipper.AddPath(path, ClipperLib::ptSubject, true))
+                        {
+                            std::clog << "ptSubject ext failed!\n";
+                        }
+                    }
                 }
             }
+            mapnik::box2d<double> box = t_.forward(buffered_query_ext,prj_trans);
+            std::vector<ClipperLib::IntPoint> clip_box;
+            clip_box.emplace_back(static_cast<ClipperLib::cInt>(box.minx()));
+            clip_box.emplace_back(static_cast<ClipperLib::cInt>(box.miny()));
+            clip_box.emplace_back(static_cast<ClipperLib::cInt>(box.maxx()));
+            clip_box.emplace_back(static_cast<ClipperLib::cInt>(box.maxy()));
+            if (!clipper.AddPath( clip_box, ClipperLib::ptClip, true ))
+            {
+                std::clog << "ptClip failed!\n";
+            }
+            //std::vector<std::vector<ClipperLib::IntPoint>> polygons;
+            ClipperLib::PolyTree polygons;
+            clipper.Execute(ClipperLib::ctIntersection, polygons, ClipperLib::pftNonZero, ClipperLib::pftNonZero);
+            clipper.Clear();
+            //path_count = backend_.add_path(path, tolerance_);
             backend_.stop_tile_feature();
         }
     }
